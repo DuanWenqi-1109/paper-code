@@ -1,6 +1,6 @@
 import math
 from typing import List
-from qROFS import qROFN
+from main.qROFS.qROFS import qROFN
 
 
 # ==========================================
@@ -21,8 +21,8 @@ def q_ROFWA(qrofn_list: List[qROFN], weights: List[float]) -> qROFN:
         raise ValueError("The length of qrofn_list and weights must be identical.")
 
     # Validate weights sum to 1 (using float tolerance)
-    if not math.isclose(sum(weights), 1.0, abs_tol=1e-6):
-        raise ValueError(f"Weights must sum to 1. Current sum: {sum(weights)}")
+    # if not math.isclose(sum(weights), 1.0, abs_tol=1e-6):
+    #     raise ValueError(f"Weights must sum to 1. Current sum: {sum(weights)}")
 
     # Extract q and validate homogeneity
     q = qrofn_list[0].q

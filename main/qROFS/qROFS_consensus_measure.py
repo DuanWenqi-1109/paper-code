@@ -1,7 +1,7 @@
 import math
 from typing import List, Dict, Any
-from qROFS import qROFN
-from qROFS_operator import q_ROFWA,weighted_generalized_distance
+from main.qROFS.qROFS import qROFN
+from main.qROFS.qROFS_operator import q_ROFWA,weighted_generalized_distance
 
 
 # ==========================================
