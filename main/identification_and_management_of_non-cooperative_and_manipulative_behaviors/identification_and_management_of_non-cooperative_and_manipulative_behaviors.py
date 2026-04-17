@@ -58,6 +58,7 @@ class BehaviorManagementMechanism:
         xi = params['xi']
         gamma_s = params['gamma_s']
         gamma_h = params['gamma_h']
+        gamma_m = params.get('gamma_m', gamma_h * 1.5)  # Label 3的加速衰减系数，如果未传则默认比gamma_h大
         eta_s = params['eta_s']
         eta_h = params['eta_h']
         nu = params['nu']
@@ -78,7 +79,7 @@ class BehaviorManagementMechanism:
             IC[u] = col_sum / (K - 1) if K > 1 else 0.0
         AIC = np.mean(IC)  # 群体平均入度
 
-        RF_array = np.zeros(K)  # 缓存每个专家的建议遵循度，后续信用更新需要使用
+        PFD_array = np.zeros(K)  # 缓存每个专家的建议遵循度 (PFD)，后续信用更新需要使用
 
         # --- Step 2: 行为识别及标签判定 ---
         for u in range(K):
@@ -95,11 +96,11 @@ class BehaviorManagementMechanism:
             dist_CB = weighted_generalized_distance(C_u_flat, B_u_flat, flat_weights)
             dist_AC = weighted_generalized_distance(A_u_flat, C_u_flat, flat_weights)
 
-            # 使用余弦定理计算等效点积
-            numerator = 0.5 * (dist_AB ** 2 + dist_CB ** 2 - dist_AC ** 2)
-            denominator = dist_AB * dist_CB + xi
-            RF_u = numerator / denominator
-            RF_array[u] = RF_u
+            # Measurement in metric space mapping to Eq. 29
+            numerator = dist_AB ** 2 + dist_CB ** 2 - dist_AC ** 2
+            denominator = 2.0 * (dist_CB ** 2) + xi
+            PFD_u = max(0.0, min(1.0, numerator / denominator))
+            PFD_array[u] = PFD_u
 
             # 2.2 计算犹豫度 HD_u^{t+1}
             hd_sum = 0.0
@@ -122,21 +123,26 @@ class BehaviorManagementMechanism:
             # 2.4 多条件标签判定树
             if CD[u] < epsilon:
                 if (HD_u <= tau) and (IC[u] >= AIC) and (Phi_u > delta):
-                    labels[u] = 2  # 判定为操纵者
+                    labels[u] = 3  # 判定为操纵者 (Label 3)
                 else:
-                    if RF_u <= rho:
+                    if PFD_u <= rho:
                         if credit_array[u] >= beta:
                             labels[u] = 1  # 判定为短期非合作
                         else:
                             labels[u] = 2  # 判定为顽固非合作
-                    # 注意：如果 CD_u < epsilon 但是 RF_u > rho 且不满足操纵者条件，标签保持0不变
+                    # 注意：如果 CD_u < epsilon 但是 PFD_u > rho 且不满足操纵者条件，标签保持0不变
 
         # --- Step 3: Trust Redistribution (信任流重分配) ---
         new_trust_matrix = trust_matrix.copy()
 
         for v in range(K):
-            if labels[v] in [1, 2]:  # 仅处理受到惩罚的节点
-                gamma = gamma_s if labels[v] == 1 else gamma_h
+            if labels[v] in [1, 2, 3]:  # 仅处理受到惩罚的节点
+                if labels[v] == 1:
+                    gamma = gamma_s
+                elif labels[v] == 2:
+                    gamma = gamma_h
+                else:
+                    gamma = gamma_m
 
                 for i in range(K):
                     if i == v:
@@ -144,7 +150,11 @@ class BehaviorManagementMechanism:
 
                     s_iv_old = trust_matrix[i, v]
                     # 惩罚后的信任值衰减
-                    s_iv_new = s_iv_old * np.exp(-gamma * (1.0 - credit_array[v]))
+                    if labels[v] == 3:
+                        s_iv_new = s_iv_old * np.exp(-gamma * (1.0 - credit_array[v]) * (1.0 + IC[v]))
+                    else:
+                        s_iv_new = s_iv_old * np.exp(-gamma * (1.0 - credit_array[v]))
+                    
                     delta_s = s_iv_old - s_iv_new  # 专家i对惩罚对象v流失的信任量
 
                     # 更新对v的惩罚信任值
@@ -169,14 +179,16 @@ class BehaviorManagementMechanism:
         for u in range(K):
             # 信用更新机制
             if labels[u] == 1:
-                new_credit_array[u] = credit_array[u] - eta_s * (1.0 - RF_array[u])
+                new_credit_array[u] = credit_array[u] - eta_s * (1.0 - PFD_array[u])
             elif labels[u] == 2:
+                new_credit_array[u] = credit_array[u] - eta_h * (1.0 - PFD_array[u])
+            elif labels[u] == 3:
                 new_credit_array[u] = credit_array[u] - eta_h
             else:
                 new_credit_array[u] = credit_array[u] + (CD[u] - epsilon)
 
-        # 强制性安全约束: 确保信用值落在 [0, 3.0] 区间
-        new_credit_array = np.clip(new_credit_array, 0.0, 3.0)
+        # 强制性安全约束: 确保信用值落在 [0.0, 1.0] 区间 (与论文 Eq. 36 保持恒正约束一致)
+        new_credit_array = np.clip(new_credit_array, 0.0, 1.0)
 
         # 权重更新机制 w_u^{t+1}
         new_IC = np.zeros(K)

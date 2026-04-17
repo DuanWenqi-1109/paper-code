@@ -6,23 +6,19 @@ from main.qROFS.qROFS import qROFN
 # ==========================================
 # q-ROFWA Aggregation Function
 # ==========================================
-def q_ROFWA(qrofn_list: List[qROFN], weights: List[float]) -> qROFN:
+def q_ROFWA(qrofn_list: List[qROFN]) -> qROFN:
     """
-    q-Rung Orthopair Fuzzy Weighted Aggregation (q-ROFWA).
+    q-Rung Orthopair Fuzzy Aggregation (with equal weights).
     Aggregates a list of qROFN objects into a single qROFN.
 
     :param qrofn_list: List of qROFN instances.
-    :param weights: List of corresponding weights.
     :return: A single aggregated qROFN object.
     """
-    if not qrofn_list or not weights:
-        raise ValueError("qROFN list and weights list cannot be empty.")
-    if len(qrofn_list) != len(weights):
-        raise ValueError("The length of qrofn_list and weights must be identical.")
-
-    # Validate weights sum to 1 (using float tolerance)
-    # if not math.isclose(sum(weights), 1.0, abs_tol=1e-6):
-    #     raise ValueError(f"Weights must sum to 1. Current sum: {sum(weights)}")
+    if not qrofn_list:
+        raise ValueError("qROFN list cannot be empty.")
+        
+    n = len(qrofn_list)
+    weights = [1.0 / n] * n
 
     # Extract q and validate homogeneity
     q = qrofn_list[0].q
@@ -55,42 +51,50 @@ def q_ROFWA(qrofn_list: List[qROFN], weights: List[float]) -> qROFN:
 
 
 # ==========================================
-# Weighted Generalized Distance Function
+# Normalized Euclidean Distance Function
 # ==========================================
-def weighted_generalized_distance(A_list: List[qROFN], B_list: List[qROFN], weights: List[float]) -> float:
+def normalized_euclidean_distance(A_list: List[List[qROFN]], B_list: List[List[qROFN]]) -> float:
     """
-    Calculates the weighted generalized distance between two lists of qROFNs.
+    Calculates the normalized Euclidean distance between two matrices of qROFNs.
 
-    :param A_list: First list of qROFN instances.
-    :param B_list: Second list of qROFN instances.
-    :param weights: List of attribute weights for each pair.
+    :param A_list: First matrix of qROFN instances (m x n).
+    :param B_list: Second matrix of qROFN instances (m x n).
     :return: The calculated distance as a float.
     """
-    if not (len(A_list) == len(B_list) == len(weights)):
-        raise ValueError("Lengths of A_list, B_list, and weights must all match.")
+    m = len(A_list)
+    if m == 0:
+        raise ValueError("Matrix cannot be empty.")
+    
+    n = len(A_list[0])
+    if n == 0:
+        raise ValueError("Matrix rows cannot be empty.")
 
-    if not math.isclose(sum(weights), 1.0, abs_tol=1e-6):
-        raise ValueError(f"Weights must sum to 1. Current sum: {sum(weights)}")
+    if len(B_list) != m or len(B_list[0]) != n:
+        raise ValueError("Dimensions of A_list and B_list must match.")
 
     distance_sum = 0.0
 
-    for a, b, w in zip(A_list, B_list, weights):
-        # Validate that the comparing objects have the same q parameter
-        if not math.isclose(a.q, b.q, abs_tol=1e-9):
-            raise ValueError("Compared qROFN objects must share the same 'q' parameter.")
+    for i in range(m):
+        for j in range(n):
+            a = A_list[i][j]
+            b = B_list[i][j]
+            
+            # Validate that the comparing objects have the same q parameter
+            if not math.isclose(a.q, b.q, abs_tol=1e-9):
+                raise ValueError("Compared qROFN objects must share the same 'q' parameter.")
 
-        q = a.q
+            q = a.q
 
-        # Calculate absolute differences raised to q
-        mu_diff = abs((a.mu ** q) - (b.mu ** q))
-        nu_diff = abs((a.nu ** q) - (b.nu ** q))
-        pi_diff = abs((a.hesitancy ** q) - (b.hesitancy ** q))
+            # Calculate differences raised to q
+            mu_diff = (a.mu ** q) - (b.mu ** q)
+            nu_diff = (a.nu ** q) - (b.nu ** q)
+            pi_diff = (a.hesitancy ** q) - (b.hesitancy ** q)
 
-        # Add the weighted differences to the running sum
-        distance_sum += w * (mu_diff + nu_diff + pi_diff)
+            # Add the squared differences to the running sum
+            distance_sum += (mu_diff**2 + nu_diff**2 + pi_diff**2)
 
-    # Multiply by 1/2 as defined by the generalized distance formula
-    return 0.5 * distance_sum
+    # Calculate the normalized Euclidean distance as defined by the updated formula
+    return math.sqrt(distance_sum / (2.0 * m * n))
 
 
 # ==========================================
@@ -124,8 +128,8 @@ if __name__ == "__main__":
 
     # Test 1: Aggregation (q-ROFWA)
     print("\n--- Testing q-ROFWA Aggregation ---")
-    agg_A = q_ROFWA(list_A, weights_vector)
-    agg_B = q_ROFWA(list_B, weights_vector)
+    agg_A = q_ROFWA(list_A)
+    agg_B = q_ROFWA(list_B)
 
     print(f"Aggregated List A: {agg_A}")
     print(f"  => Score (S) = {agg_A.score():.4f}, Accuracy (A) = {agg_A.accuracy():.4f}")
@@ -135,11 +139,13 @@ if __name__ == "__main__":
 
     print(f"Is Aggregated A > Aggregated B? {agg_A > agg_B}")
 
-    # Test 2: Weighted Generalized Distance
-    print("\n--- Testing Weighted Generalized Distance ---")
-    dist_AB = weighted_generalized_distance(list_A, list_B, weights_vector)
+    # Test 2: Normalized Euclidean Distance
+    print("\n--- Testing Normalized Euclidean Distance ---")
+    matrix_A = [list_A] # Wrapping in list to create 1x3 matrix
+    matrix_B = [list_B]
+    dist_AB = normalized_euclidean_distance(matrix_A, matrix_B)
     print(f"Distance D(A, B) = {dist_AB:.6f}")
 
     # Distance between identical lists should naturally evaluate to 0
-    dist_AA = weighted_generalized_distance(list_A, list_A, weights_vector)
+    dist_AA = normalized_euclidean_distance(matrix_A, matrix_A)
     print(f"Distance D(A, A) (Should be 0.0) = {dist_AA:.6f}")

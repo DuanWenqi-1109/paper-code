@@ -1,86 +1,75 @@
 import math
 from typing import List, Dict, Any
 from main.qROFS.qROFS import qROFN
-from main.qROFS.qROFS_operator import q_ROFWA,weighted_generalized_distance
+from main.qROFS.qROFS_operator import q_ROFWA,normalized_euclidean_distance
 
 
 # ==========================================
 # Consensus Measurement Framework
 # ==========================================
-def calculate_consensus(
+def calculate_collective_opinion_matrix(
         preferences: List[List[List[qROFN]]],
-        attr_weights: List[float],
         dm_weights: List[float]
-) -> Dict[str, Any]:
+) -> List[List[qROFN]]:
     """
-    Calculates the multi-level consensus degrees.
+    Calculates the collective opinion matrix.
 
     :param preferences: 3D list (e x m x n) -> DM k -> Alternative i -> Attribute j
-    :param attr_weights: 1D list of attribute weights (length n)
     :param dm_weights: 1D list of expert influence weights (length e)
-    :return: Dictionary containing collective prefs, and consensus levels.
+    :return: 2D collective preference matrix (m x n).
     """
-    # Base dimensions
-    e = len(preferences)  # Number of Experts
+    e = len(preferences)
     if e == 0: raise ValueError("No experts provided.")
-
-    m = len(preferences[0])  # Number of Alternatives
+    m = len(preferences[0])
     if m == 0: raise ValueError("No alternatives provided.")
-
-    n = len(preferences[0][0])  # Number of Attributes
+    n = len(preferences[0][0])
     if n == 0: raise ValueError("No attributes provided.")
 
-    # Validate weight sums
     if not math.isclose(sum(dm_weights), 1.0, abs_tol=1e-6):
         raise ValueError(f"Expert weights must sum to 1. Got: {sum(dm_weights)}")
-    if not math.isclose(sum(attr_weights), 1.0, abs_tol=1e-6):
-        raise ValueError(f"Attribute weights must sum to 1. Got: {sum(attr_weights)}")
 
-    # ---------------------------------------------------------
-    # Step 1: Calculate Collective Preference (d_ij^c)
-    # ---------------------------------------------------------
-    # Initialize a 2D list for collective preference matrix (m x n)
     collective_prefs = [[None for _ in range(n)] for _ in range(m)]
 
     for i in range(m):
         for j in range(n):
-            # Extract evaluation from all 'e' experts for alternative 'i', attribute 'j'
             expert_evals = [preferences[k][i][j] for k in range(e)]
-            # Aggregate them using expert weights to form the group's collective opinion
-            collective_prefs[i][j] = q_ROFWA(expert_evals, dm_weights)
+            # Aggregate them using equal weights to form the group's collective opinion
+            collective_prefs[i][j] = q_ROFWA(expert_evals)
 
-    # ---------------------------------------------------------
-    # Step 2: Alternative Level Consensus (CD_i^k)
-    # ---------------------------------------------------------
-    # Initialize a 2D list for Alternative-Level Consensus (e x m)
-    alternative_cd = [[0.0 for _ in range(m)] for _ in range(e)]
+    return collective_prefs
 
+
+def calculate_consensus_degree(
+        preferences: List[List[List[qROFN]]],
+        collective_prefs: List[List[qROFN]],
+        dm_weights: List[float]
+) -> Dict[str, Any]:
+    """
+    Calculates the expert-level and group-level consensus degrees.
+
+    :param preferences: 3D list (e x m x n) -> DM k -> Alternative i -> Attribute j
+    :param collective_prefs: 2D collective preference matrix (m x n)
+    :param dm_weights: 1D list of expert influence weights (length e)
+    :return: Dictionary containing consensus levels.
+    """
+    e = len(preferences)
+    if e == 0: raise ValueError("No experts provided.")
+    
+    if not math.isclose(sum(dm_weights), 1.0, abs_tol=1e-6):
+        raise ValueError(f"Expert weights must sum to 1. Got: {sum(dm_weights)}")
+
+    # Calculate Expert Level Consensus (CD_u = 1 - D(D_u, D_C))
+    expert_cd = [0.0 for _ in range(e)]
     for k in range(e):
-        for i in range(m):
-            # The preference vector of DM k on alternative i across attributes
-            dm_vector = preferences[k][i]
-            # The collective preference vector on alternative i across attributes
-            col_vector = collective_prefs[i]
+        # D_u is preferences[k], D_C is collective_prefs
+        dm_matrix = preferences[k]
+        dist = normalized_euclidean_distance(dm_matrix, collective_prefs)
+        expert_cd[k] = 1.0 - dist
 
-            # Calculate Distance and inherently determine consensus (1 - Distance)
-            dist = weighted_generalized_distance(dm_vector, col_vector, attr_weights)
-            alternative_cd[k][i] = 1.0 - dist
-
-    # ---------------------------------------------------------
-    # Step 3: Expert Level Consensus (CD_k)
-    # ---------------------------------------------------------
-    # Average the alternative-level consensus across all 'm' alternatives for each expert
-    expert_cd = [sum(alternative_cd[k]) / m for k in range(e)]
-
-    # ---------------------------------------------------------
-    # Step 4: Group Level Consensus (CD_C)
-    # ---------------------------------------------------------
-    # Aggregate expert-level consensus using the expert influence weights (omega_k)
+    # Calculate Group Level Consensus (CD_C = Sum(w_u * CD_u))
     group_cd = sum(dm_weights[k] * expert_cd[k] for k in range(e))
 
     return {
-        "collective_preferences": collective_prefs,
-        "alternative_level": alternative_cd,
         "expert_level": expert_cd,
         "group_level": group_cd
     }
@@ -111,23 +100,23 @@ if __name__ == "__main__":
         ]
     ]
 
-    print("--- Executing Consensus Measurement Framework ---")
-    results = calculate_consensus(prefs, attribute_weights, experts_weights)
-
-    # Output formatting
-    print("\n1. Collective Preferences Matrix (d_ij^c):")
-    for i, row in enumerate(results["collective_preferences"]):
+    print("--- Executing Refactored Consensus Measurement Framework ---")
+    
+    # 1. Calculate collective opinion matrix
+    collective_matrix = calculate_collective_opinion_matrix(prefs, experts_weights)
+    
+    # Output collective matrix
+    print("\n1. Collective Preferences Matrix (D_C):")
+    for i, row in enumerate(collective_matrix):
         print(f"  Alternative {i + 1}: {row}")
 
-    print("\n2. Alternative Level Consensus (CD_i^k):")
-    for k, dms_cds in enumerate(results["alternative_level"]):
-        print(f"  Expert {k + 1}:")
-        for i, cd in enumerate(dms_cds):
-            print(f"    Alternative {i + 1} Consensus = {cd:.4f}")
+    # 2. Calculate consensus degrees
+    consensus_results = calculate_consensus_degree(prefs, collective_matrix, experts_weights)
 
-    print("\n3. Expert Level Consensus (CD_k):")
-    for k, cd in enumerate(results["expert_level"]):
+    # Output consensus degrees
+    print("\n2. Expert Level Consensus (CD_u):")
+    for k, cd in enumerate(consensus_results["expert_level"]):
         print(f"  Expert {k + 1} Consensus = {cd:.4f}")
 
-    print("\n4. Group Level Consensus (CD_C):")
-    print(f"  Overall Group Consensus = {results['group_level']:.4f}")
+    print("\n3. Group Level Consensus (CD_C):")
+    print(f"  Overall Group Consensus = {consensus_results['group_level']:.4f}")

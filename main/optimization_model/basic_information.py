@@ -4,17 +4,17 @@ from main.qROFS.qROFS import qROFN
 from main.qROFS.qROFS_operator import q_ROFWA
 
 
-def precompute_reference_opinions(opinions, weights):
-    """
+def precompute_reference_opinions(opinions, trust_matrix):
+    r"""
     【M1: 底层数据与前置计算模块】
     预计算所有专家的参考意见矩阵 (Reference Opinions)
-    公式: D_{Ru}^t = \sum_{v \neq u}^K w_v^t D_v^t
+    公式: D_{Ru} = \sum_{v=1, v \neq u}^K s_{uv} D_v
 
     参数:
     opinions : list
         长度为 K 的列表，代表 K 个专家的原始意见。每个元素是一个 m*n 的嵌套列表（由 qROFN 对象构成）。
-    weights : list or np.ndarray
-        长度为 K 的一维浮点数组/列表，代表专家权重，且 sum(weights) == 1。
+    trust_matrix : list or np.ndarray
+        K*K的方阵，代表着专家间的信任矩阵（第u行第v列的元素代表着专家u对专家v的信任值）。
 
     返回:
     reference_opinions : list
@@ -23,7 +23,7 @@ def precompute_reference_opinions(opinions, weights):
     # 将嵌套列表转换为 numpy 的对象数组，维度为 (K, m, n)
     ops_array = np.array(opinions, dtype=object)
     K, m, n = ops_array.shape
-    weights_array = np.array(weights)
+    trust_array = np.array(trust_matrix)
 
     reference_opinions = []
 
@@ -32,9 +32,8 @@ def precompute_reference_opinions(opinions, weights):
         # 1. 构造布尔掩码，排除当前专家 u
         mask = np.arange(K) != u
 
-        # 2. 提取除 u 以外其他专家的权重，转换为列表。
-        # 【注意】按照业务逻辑：排除了专家 u，剩余的权重直接使用原始权重，不进行归一化
-        w_other = weights_array[mask].tolist()
+        # 2. 提取当前专家 u 对其他专家 v 的信任值，转换为列表。
+        w_other = trust_array[u][mask].tolist()
 
         # 3. 提取其他专家的意见张量，维度为 (K-1, m, n)
         other_ops = ops_array[mask]
@@ -67,8 +66,11 @@ def precompute_reference_opinions(opinions, weights):
 q_val = 3.0
 
 # Let's assume e=2 (Experts), m=2 (Alternatives), n=2 (Attributes)
-experts_weights = [0.6, 0.4]  # omega_k
-attribute_weights = [0.7, 0.3]  # w_j
+# 构造包含两个专家的信任矩阵 (K * K)
+trust_matrix = [
+    [1.0, 0.8],  # 专家1 对 专家1, 专家2 的信任值
+    [0.7, 1.0]   # 专家2 对 专家1, 专家2 的信任值
+]
 
 # Building a 3D Mock Preference Matrix: preferences[Expert][Alternative][Attribute]
 prefs = [
@@ -84,5 +86,5 @@ prefs = [
     ]
 ]
 
-a = precompute_reference_opinions(prefs, attribute_weights)
+a = precompute_reference_opinions(prefs, trust_matrix)
 print(a)

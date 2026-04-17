@@ -24,7 +24,7 @@ class TOCM_Problem(Problem):
         self.K = len(opinions)
         self.m = len(opinions[0])
         self.n = len(opinions[0][0])
-
+        self.attribute_weights = [1.0 / self.n] * self.n
         # 初始化 pymoo Problem 核心参数
         super().__init__(
             n_var=self.K,  # 决策变量数量: K 个专家的保留系数
@@ -66,26 +66,39 @@ class TOCM_Problem(Problem):
             r = np.zeros(self.K)
             for u in range(self.K):
                 # 调用底层距离函数 D(D_u, AD_u)
-                dist = weighted_generalized_distance(self.opinions[u], AD_list[u], self.weights)
+                # dist = weighted_generalized_distance(self.opinions[u], AD_list[u], self.weights)
+                dist_sum = 0.0
+                m_alternatives = len(self.opinions[u])  # 方案数 m = 6
+
+                # 遍历每一个方案（按行计算距离）
+                for i in range(m_alternatives):
+                    row_original = self.opinions[u][i]  # 长度为 n 的 qROFN 列表
+                    row_adjusted = AD_list[u][i]  # 长度为 n 的 qROFN 列表
+
+                    # 此时 row_original, row_adjusted 和 attribute_weights 的长度都是 n (4)
+                    # 完美符合函数的长度要求
+                    row_dist = weighted_generalized_distance(row_original, row_adjusted, self.attribute_weights)
+                    dist_sum += row_dist
+
+                # 矩阵的总距离是各方案距离的平均值
+                dist = dist_sum / m_alternatives
                 r[u] = self.costs[u] * dist
 
             # 3. 计算目标 1: 最小化总成本 f1
             f1 = np.sum(r)
-
             # 4. 计算目标 2: 最大化共识度 f2 (转换为最小化 -CD_C)
-            consensus_result = calculate_consensus(AD_list, self.weights)
+            consensus_result = calculate_consensus(AD_list, self.attribute_weights,self.weights)
             CD_C = consensus_result["group_level"]
             f2 = -CD_C
 
             # 5. 计算目标 3: 最大化公平度 f3 (转换为最小化 -f3)
             r_mean = np.mean(r)
-            if r_mean < 1e-9:
-                # 防零保护: 若平均成本极小，视为完全公平
-                f3_val = 1.0
-            else:
-                # 利用 NumPy 广播机制高效计算所有专家成本的两两绝对差值之和
-                sum_diff = np.sum(np.abs(r[:, None] - r[None, :]))
-                f3_val = 1.0 - (sum_diff / (2 * (self.K ** 2) * r_mean))
+            # 依据论文公式 (25) 引入微小正常数 \xi (xi) 避免除零错误
+            xi = 1e-6
+            # 利用 NumPy 广播机制高效计算所有专家成本的两两绝对差值双重求和: \sum_u \sum_v |r_u - r_v|
+            sum_diff = np.sum(np.abs(r[:, None] - r[None, :]))
+            # 基于稳定的基尼系数结构计算公平度
+            f3_val = 1.0 - (sum_diff / (2 * (self.K ** 2) * (r_mean + xi)))
             f3 = -f3_val
 
             # 6. 计算约束 g: epsilon - CD_C <= 0

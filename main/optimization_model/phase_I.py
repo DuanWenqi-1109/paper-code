@@ -2,10 +2,10 @@ import copy
 from main.qROFS.qROFS_operator import q_ROFWA
 from main.qROFS.qROFS_consensus_measure import calculate_consensus
 
-def adaptive_boundary_detection(opinions, reference_opinions, weights, theta_min, epsilon, alpha, max_iter=1000,
+def adaptive_boundary_detection(opinions, reference_opinions, weights, theta_min_initial, epsilon, iota, max_iter=1000,
                                 min_theta_threshold=0.01):
     """
-    【M2: 阶段一 - 自适应边界检测模块】
+    【M2: 阶段一 - 自适应边界检测模块(Asymmetric Boundary Detection and Relaxation)】
     通过底线放松机制，寻找满足共识度阈值的安全保留系数下界。
 
     参数:
@@ -15,12 +15,12 @@ def adaptive_boundary_detection(opinions, reference_opinions, weights, theta_min
         K 个专家的参考意见矩阵列表，维度为 (K, m, n)。
     weights : list
         专家权重列表。
-    theta_min : list
-        长度为 K 的列表，代表每一位专家的初始保留系数下界 (0 < theta <= 1)。
+    theta_min_initial : float
+        所有专家的统一初始保留系数下界 (0 < theta <= 1)。
     epsilon : float
         目标共识度阈值。
-    alpha : float
-        衰减因子，用于降低未达标专家的 theta_min。
+    iota : float
+        衰减因子，用于降低未达标专家的保留系数下界。
     max_iter : int
         最大迭代次数，防止死循环。
     min_theta_threshold : float
@@ -33,9 +33,9 @@ def adaptive_boundary_detection(opinions, reference_opinions, weights, theta_min
     K = len(opinions)
     m = len(opinions[0])
     n = len(opinions[0][0])
-
-    # 初始化 hat_theta_min，深拷贝以防污染原始输入
-    hat_theta_min = copy.deepcopy(theta_min)
+    attribute_weights = [1.0 / n] * n
+    # 依据论文：Initially, the lower bound for all experts is set uniformly to theta_min
+    hat_theta_min = [float(theta_min_initial)] * K
 
     iteration = 0
     while iteration < max_iter:
@@ -62,7 +62,7 @@ def adaptive_boundary_detection(opinions, reference_opinions, weights, theta_min
             adjusted_opinions.append(adj_matrix_u)
 
         # c. 调用 calculate_consensus 获取当前极限状态下的共识度结果
-        consensus_result = calculate_consensus(adjusted_opinions, weights)
+        consensus_result = calculate_consensus(adjusted_opinions,attribute_weights, weights)
 
         # 提取群体共识度 (CD_max) 和 专家维度共识度
         CD_max = consensus_result["group_level"]
@@ -72,22 +72,25 @@ def adaptive_boundary_detection(opinions, reference_opinions, weights, theta_min
         if CD_max >= epsilon:
             break
 
-        # e. 如果未达到，触发反馈机制：对未达标的专家降低其保留系数下界
+        # e. 如果未达到，触发反馈机制：依据公式进行非对称边界松弛
+        # 公式 27: 定义瓶颈专家调整集 \Omega_{adj}^l
+        omega_adj = [u for u in range(K) if expert_cd[u] < epsilon]
+        
         updated = False
-        for u in range(K):
-            if expert_cd[u] < epsilon:
-                # 衰减更新
-                hat_theta_min[u] = alpha * hat_theta_min[u]
+        # 公式 28: 仅对在这个调整集中的专家施加 \iota 衰减，others unchanged
+        for u in omega_adj:
+            # 衰减更新
+            hat_theta_min[u] = iota * hat_theta_min[u]
 
-                # 防死循环机制：限制最小阈值
-                if hat_theta_min[u] < min_theta_threshold:
-                    hat_theta_min[u] = min_theta_threshold
-                else:
-                    updated = True  # 标记本轮确实发生了有效的衰减
+            # 工程防御：防止死循环限制最小阈值
+            if hat_theta_min[u] < min_theta_threshold:
+                hat_theta_min[u] = min_theta_threshold
+            else:
+                updated = True  # 标记本轮确实发生了有效的衰减
 
-        # 如果所有未达标的专家都已经降到了最低阈值(未发生有效衰减)，则强制跳出，防止无限死循环
+        # 如果调整集里的专家都已触底未能发生有效衰减，强制跳出防止无限循环
         if not updated:
-            print(f"警告: 无法达到目标共识度 epsilon={epsilon}，已触底极小值保护阈值。")
+            print(f"警告: 无法达到目标共识度 epsilon={epsilon}，需调整的专家由于极小值保护触底。")
             break
 
         iteration += 1
